@@ -1,0 +1,46 @@
+/**
+ * jquery_ujsの代替
+ * jquery_ujsのコードを元に作成
+ * es6とes5が共存するページで二重読み込みされるとバグってしまう箇所に対する対応
+ */
+var JqueryUjsAlternative = function(selector) {
+  var self = this;
+  $(selector).on('click', function(e) {
+    self.onClickNoneUjs(e);
+  });
+};
+
+JqueryUjsAlternative.prototype.handleMethod = function($link) {
+  var href = $link.attr('href'),
+    target = $link.attr('target'),
+    method = $link.data('noneujs-method'),
+    csrfToken = $('meta[name=csrf-token]').attr('content'),
+    csrfParam = $('meta[name=csrf-param]').attr('content'),
+    $form = $('<form method="post" action="' + href + '"></form>'),
+    metadataInput = '<input name="_method" value="' + method + '" type="hidden" />';
+
+  if (csrfParam !== undefined && csrfToken !== undefined) {
+    metadataInput += '<input name="' + csrfParam + '" value="' + csrfToken + '" type="hidden" />';
+  }
+
+  if (target) { $form.attr('target', target); }
+
+  $form.hide().append(metadataInput).appendTo('body');
+  $form.submit();
+};
+
+JqueryUjsAlternative.prototype.onClickNoneUjs = function(e) {
+  var $link = $(e.currentTarget);
+  if (
+    $link.data('noneujs-confirm') &&
+    !confirm($link.data('noneujs-confirm'))
+  ) {
+    e.preventDefault();
+    return false;
+  }
+
+  if ($link.data('noneujs-method')) {
+    this.handleMethod($link);
+    e.preventDefault();
+  }
+};

@@ -1,0 +1,250 @@
+(function($){
+  function fillContainer(val, targetLength, containerLength) { // ensure that no gaps are between target's edges and container's edges
+    if(val + targetLength < containerLength) val = containerLength-targetLength;
+    if(val > 0) val = 0;
+    return val;
+  }
+
+  $.tabelogCrop = function(image, options){
+    var base = this;
+    base.$image = $(image); // target image jquery element
+    base.image = image; // target image dom element
+    base.$image.data("tabelogCrop", base); // target frame jquery element
+
+    base.namespace = 'tabelogCrop';
+    base.originalWidth = 0;
+    base.isDragging = false;
+    base.isChangingImage = false;
+    base.result = {};
+    base.options = $.extend({},$.tabelogCrop.defaultOptions, options);
+    if(base.options.zoomSteps < 2) base.options.zoomSteps = 2;
+
+    base.init = function() {
+      initImageProperty();
+      initImageStyle();
+
+      base.$image.addClass('tbcrop-image');
+      base.$image.wrap('<div class="tbcrop-frame" />');
+      base.$frame = base.$image.parent();
+      base.$frame.css({'overflow': 'hidden', 'position': 'relative', 'width': base.options.targetWidth, 'height': base.options.targetHeight});
+      base.$image.show();
+      base.$image.off('load.init');
+    };
+
+    base.changeImageStart = function(afterImageSrc){
+      base.isChangingImage = true;
+      base.$image.hide();
+
+      base.beforeImageSrc = base.$image.attr('src');
+      base.beforeOriginalWidth = base.originalWidth;
+      base.beforeOriginalHeight = base.originalHeight;
+      base.beforeMinPercent = base.minPercent;
+
+      base.$image.attr('src', afterImageSrc);
+      base.$image.removeAttr( 'style' ); // undo the style
+      base.$image.on('load.change', function () {
+        initImageProperty();
+        //一番引きの状態にする
+        base.workingPercent = base.minPercent;
+        base.$image.css({'position': 'absolute', 'top': '0px', 'left': '0px'});
+
+        base.startEditMode();
+        base.$image.off('load.change');
+      });
+    };
+
+    base.changeImageCancel = function(){
+      base.$image.attr('src', base.beforeImageSrc);
+      base.$image.on('load.cancel', function () {
+        base.originalWidth = base.beforeOriginalWidth;
+        base.originalHeight = base.beforeOriginalHeight;
+        base.minPercent = base.beforeMinPercent;
+        base.exitEditMode();
+        base.$image.off('load.cancel');
+      });
+    };
+
+    base.saveImage = function() {
+      base.$image.attr('data-width', base.result.width).attr('data-left', base.result.left).attr('data-top', base.result.top);
+      base.exitEditMode();
+    };
+
+    base.onCancel = function(e) {
+      if (base.isChangingImage) {
+        base.changeImageCancel();
+      }else{
+        base.exitEditMode();
+      }
+      return base.options.afterCancel(e);
+    };
+
+    base.startEditMode = function(){
+      base.$image.hide();
+      base.$frame.append('<div class="tbcrop-controls" style="display:'+(base.options.showControlsOnStart ? 'block' : 'none')+';"><div class="tbcrop-guide-txt"><span>・ドラッグして好きな位置に調整できます。</span><span id="tbcrop-zoom-desc">・右下のズームボタンで拡大・縮小できます。</span></div><div class="tbcrop-btn-zoom clearfix"><a href="#" class="tbcrop-zoom-out"></a><a href="#" class="tbcrop-zoom-in"></a></div><div class="tbcrop-btn-action"><a href="#" class="c-btn c-btn--s tbcrop-btn-action__cancel js-tbcrop-cancel">キャンセル</a><a href="#" class="c-btn c-btn--s c-btn--success js-tbcrop-save">変更を保存</a></div></div>');
+      if(base.options.targetWidth == base.originalWidth && base.options.targetHeight == base.originalHeight){
+        base.$frame.find('.tbcrop-guide-txt').remove();
+      }
+      storeFocalPoint();
+      base.setZoom(base.workingPercent);
+
+      base.$frame.find('.tbcrop-zoom-in').on('click.'+ base.namespace, base.zoomIn);
+      base.$frame.find('.tbcrop-zoom-out').on('click.'+ base.namespace, base.zoomOut);
+      base.$frame.find('.js-tbcrop-save').on('click.'+ base.namespace, base, base.options.onSave);
+      base.$frame.find('.js-tbcrop-cancel').on('click.'+ base.namespace, base, base.onCancel);
+      base.$frame.on('mouseenter.'+ base.namespace, handleMouseEnter);
+      $(document).on('mousemove.'+ base.namespace, handleMouseMove);
+      $(document).on('mouseup.'+ base.namespace, handleMouseUp);
+      base.$image.on('mousedown.'+ base.namespace, handleMouseDown);
+      base.$image.css( 'cursor', 'move' );
+      base.$image.fadeIn('slow');
+    };
+
+    base.exitEditMode = function() {
+      base.$image.removeAttr( 'style' ); // undo the style
+      base.$image.css( 'cursor', 'default' );
+      base.$image.hide();
+      base.$frame.off('mouseenter.'+ base.namespace);
+      $(document).off('mousemove.'+ base.namespace);
+      $(document).off('mouseup.'+ base.namespace);
+      base.$frame.find('.tbcrop-zoom-in, .tbcrop-zoom-out, .js-tbcrop-save, .js-tbcrop-cancel').off('click.'+ base.namespace);
+      $('.tbcrop-controls').remove(); // remove the added controls
+      initImageStyle();
+      base.isChangingImage = false;
+      base.$image.fadeIn('slow');
+    };
+
+    base.setZoom = function(percent) {
+      //unable to zoom
+      if(base.minPercent >= 1) {
+        percent = base.minPercent;
+        base.$frame.find('.tbcrop-zoom-in').addClass('inactive');
+        base.$frame.find('.tbcrop-zoom-out').addClass('inactive');
+        base.$frame.find('#tbcrop-zoom-desc, .tbcrop-btn-zoom').remove();
+      //state of being maximum zoom
+      } else if(percent >= 1.0) {
+        percent = 1;
+        base.$frame.find('.tbcrop-zoom-in').addClass('inactive');
+      //state of being minimum zoom
+      } else if(percent <= base.minPercent) {
+        percent = base.minPercent;
+        base.$frame.find('.tbcrop-zoom-out').addClass('inactive');
+      }else{
+        base.$frame.find('.tbcrop-zoom-in').removeClass('inactive');
+        base.$frame.find('.tbcrop-zoom-out').removeClass('inactive');
+      }
+      base.$image.width(Math.ceil(base.originalWidth*percent));
+      base.result.width = base.$image.width();
+      base.workingPercent = percent;
+      focusOnCenter();
+      updateResult();
+    };
+    base.zoomIn = function() {
+      var zoomIncrement = (1.0 - base.minPercent) / (base.options.zoomSteps-1);
+      base.setZoom(base.workingPercent+zoomIncrement);
+      return false;
+    };
+    base.zoomOut = function() {
+      var zoomIncrement = (1.0 - base.minPercent) / (base.options.zoomSteps-1);
+      base.setZoom(base.workingPercent-zoomIncrement);
+      return false;
+    };
+
+    function initImageProperty(){
+      base.originalWidth = base.$image.width();
+      base.originalHeight = base.$image.height();
+
+      if(base.originalWidth > 0) {
+        var widthRatio = base.options.targetWidth / base.originalWidth;
+        var heightRatio = base.options.targetHeight / base.originalHeight;
+        if(widthRatio >= heightRatio) {
+          base.minPercent = (base.originalWidth < base.options.targetWidth) ? (base.options.targetWidth / base.originalWidth) : widthRatio;
+        } else {
+          base.minPercent = (base.originalHeight < base.options.targetHeight) ? (base.options.targetHeight / base.originalHeight) : heightRatio;
+        }
+      }
+    }
+
+    function initImageStyle(){
+      base.$image.css({'position': 'absolute', 'width' : base.$image.attr('data-width') + 'px', 'left' : base.$image.attr('data-left') + 'px', 'top' : base.$image.attr('data-top') + 'px'});
+      base.workingPercent = parseInt(base.$image.attr('data-width'), 10) / base.originalWidth;
+    }
+
+    function storeFocalPoint() {
+      var x = (parseInt(base.$image.css('left'), 10)*-1 + base.options.targetWidth/2) / base.workingPercent;
+      var y = (parseInt(base.$image.css('top'), 10)*-1 + base.options.targetHeight/2) / base.workingPercent;
+      base.focalPoint = {'x': Math.round(x), 'y': Math.round(y)};
+    }
+    function focusOnCenter() {
+      var left = fillContainer((Math.round((base.focalPoint.x*base.workingPercent) - base.options.targetWidth/2)*-1), base.$image.width(), base.options.targetWidth);
+      var top = fillContainer((Math.round((base.focalPoint.y*base.workingPercent) - base.options.targetHeight/2)*-1), base.$image.height(), base.options.targetHeight);
+      base.$image.css({'left': (left.toString()+'px'), 'top': (top.toString()+'px')});
+      base.result.left = left.toString();
+      base.result.top = top.toString();
+      storeFocalPoint();
+    }
+    function updateResult() {
+      base.result.cropX = Math.floor(parseInt(base.$image.css('left'), 10)/base.workingPercent*-1);
+      base.result.cropY = Math.floor(parseInt(base.$image.css('top'), 10)/base.workingPercent*-1);
+      base.result.cropW = Math.round(base.options.targetWidth/base.workingPercent);
+      base.result.cropH = Math.round(base.options.targetHeight/base.workingPercent);
+      base.result.mustStretch = (base.minPercent > 1);
+      base.options.onChange.call(base.image, base.result);
+    }
+    function handleMouseDown(event) {
+      event.preventDefault(); //some browsers do image dragging themselves
+      base.isDragging = true;
+      base.dragMouseCoords = {x: event.pageX, y: event.pageY};
+      base.dragImageCoords = {x: parseInt(base.$image.css('left'), 10), y: parseInt(base.$image.css('top'), 10)};
+    }
+    function handleMouseUp() {
+      base.isDragging = false;
+    }
+    function handleMouseMove(event) {
+      event.preventDefault(); //some browsers do image dragging themselves
+      if(base.isDragging) {
+        var xDif = event.pageX - base.dragMouseCoords.x;
+        var yDif = event.pageY - base.dragMouseCoords.y;
+        var newLeft = fillContainer((base.dragImageCoords.x + xDif), base.$image.width(), base.options.targetWidth);
+        var newTop = fillContainer((base.dragImageCoords.y + yDif), base.$image.height(), base.options.targetHeight);
+        base.$image.css({'left' : (newLeft.toString()+'px'), 'top' : (newTop.toString()+'px')});
+        base.result.left = newLeft.toString();
+        base.result.top = newTop.toString();
+        storeFocalPoint();
+        updateResult();
+      }
+    }
+    function handleMouseEnter() {
+      if(base.options.smartControls) base.$frame.find('.tbcrop-controls').show();//fadeIn('fast');
+    }
+
+    if(base.$image.width() > 0){
+      base.init();
+    }else{
+      base.$image.on('load.init', function () {
+        base.init();
+      });
+    }
+  };
+
+  $.tabelogCrop.defaultOptions = {
+    targetWidth: 320,
+    targetHeight: 180,
+    zoomSteps: 10,
+    smartControls: true,
+    showControlsOnStart: true,
+    onChange: function() {},
+    onSave: function(){},
+    afterCancel: function(){}
+  };
+
+  $.fn.tabelogCrop = function(options){
+    return this.each(function(){
+      (new $.tabelogCrop(this, options));
+    });
+  };
+
+  $.fn.getTabelogCrop = function(){
+    return this.data("tabelogCrop");
+  };
+})(jQuery);
+

@@ -1,0 +1,442 @@
+//
+// modules/reviewerのコピー
+// フォローフォロワー一覧用に修正
+// [SHOULD] 名前を modules/reviewer.js に変えたい
+//
+var Reviewer;
+var ReviewerInitedModels = {};
+var ReviewerEventer = _.extend({}, Backbone.Events);
+Reviewer = function(spec){
+  var that = {};
+  var m = ReviewerEventer;
+  m.triggerWithId = function(event_name, view){
+    this.trigger(event_name + ":" + view.model.get("rvwr_id"));
+  };
+
+  // レビュアー model
+  // attributes: rvwr_id, follow, mute, blocking
+  var Reviewer = Backbone.Model.extend({
+    initialize: function(){
+      this.listenToWithId(m, 'Reviewer:follow', this.follow);
+      this.listenToWithId(m, 'Reviewer:unFollow', this.unFollow);
+      this.listenToWithId(m, 'Reviewer:muteOn', this.muteOn);
+      this.listenToWithId(m, 'Reviewer:muteOff', this.muteOff);
+      this.listenToWithId(m, 'Reviewer:block', this.block);
+      this.listenToWithId(m, 'Reviewer:unBlock', this.unblock);
+      this.listenToWithId(m, 'Reviewer:reject', this.reject);
+      this.listenToWithId(m, 'Reviewer:approval', this.approval);
+      this.listenToWithId(m, 'Reviewer:withdraw', this.withdraw);
+    },
+    listenToWithId: function(obj, event_name, method){
+      this.listenTo(obj, event_name + ":" + this.get("rvwr_id"), method);
+    },
+    AjaxBasicOpts: function() {
+      return {
+        type: 'post',
+        dataType: 'json'
+      };
+    },
+    DefaultData: function() {
+      return {
+        user_id: this.get('rvwr_id'),
+        authenticity_token: spec.token
+      };
+    },
+    reject: function(){
+      if(confirm("削除してよろしいですか？")){
+        this.updateFollowRequest(false);
+      }
+    },
+    approval: function(){
+      this.updateFollowRequest(true);
+    },
+    withdraw: function(){
+      if(confirm("フォロー申請を取り下げてもよろしいでしょうか？")){
+        this.updateUserReviewer(false);
+      }
+    },
+    follow: function(){
+      if (App.followCatalyst !== ""){
+        onclickcatalystbutton(App.followCatalyst);
+      }
+      this.updateUserReviewer(true);
+    },
+    unFollow: function(){
+      if(confirm("フォローをやめてよろしいですか？")){
+        this.updateUserReviewer(false);
+      }
+    },
+    muteOn: function(){
+      this.updateMute(true);
+    },
+    updateFollowRequest: function(approval){
+      var that = this;
+      var opts = _.extend(this.AjaxBasicOpts(), {
+        url: approval ? '/myrvwr/auth_approval_follow_request' : '/myrvwr/auth_reject_follow_request',
+        data: _.extend(this.DefaultData()),
+        success: function(req){
+          if(approval){
+            that.updateUserReviewerSuccess(req, false, that);
+          }else{
+            window.location.reload();
+          }
+        },
+        error: function(req){
+          that.dealWithError(req);
+        },
+        complete: function(){
+          that.trigger('sync');
+        }
+      });
+      $.ajax(opts);
+    },
+    updateUserReviewer: function(add){
+      var that = this;
+      var opts = _.extend(this.AjaxBasicOpts(), {
+        url: add ? '/myrvwr/add_myrvwr_uid' : '/myrvwr/auth_myrvwr_del_uid',
+        data: _.extend(this.DefaultData(), add ? {mute: "false"} : {unfollow: 1}),
+        success: function(req){
+          that.updateUserReviewerSuccess(req, add, that);
+        },
+        error: function(req){
+          that.dealWithError(req);
+        },
+        complete: function(){
+          that.trigger('sync');
+        }
+      });
+      $.ajax(opts);
+    },
+    updateUserReviewerSuccess: function(req, add, that){
+      if (req.error_message) {
+        alert(req.error_message);
+      } else {
+        that.set({requested: req.requested, judge_request: false, follow: req.follow, mute: req.mute});
+      }
+    },
+    muteOff: function(){
+      this.updateMute(false);
+    },
+    updateMute: function(mute){
+      var that = this;
+      var opts = _.extend(this.AjaxBasicOpts(), {
+        url: '/myrvwr/favorite_myrvwr_update_uid',
+        data: _.extend(this.DefaultData(), {mute: (mute ? "true" : "false")}),
+        success: function(req){
+          that.updateMuteSuccess(req, mute, that);
+        },
+        error: function(req){
+          that.dealWithError(req);
+        },
+        complete: function(){
+          that.trigger('sync');
+        }
+      });
+      $.ajax(opts);
+    },
+    updateMuteSuccess: function(req, mute, that){
+      if (req.error_message) {
+        alert(req.error_message);
+      } else {
+        that.set({follow: true, mute: mute});
+        if( typeof req.success_message !== 'undefined' && mute === true){
+          alert(req.success_message);
+        }
+      }
+    },
+    dealWithError: function(req){
+      try {
+        if(JSON.parse(req.responseText).maintenance_message){
+          // リードオンリーモードへの対応
+          alert(JSON.parse(req.responseText).maintenance_message);
+        } else {
+          alert(JSON.parse(req.responseText).error_message);
+        }
+      } catch(e) {
+        alert("エラーが発生しました。画面を再読み込みしてください。");
+      }
+    },
+    block: function(){
+      this.updateBlock(true);
+    },
+    unblock: function(){
+      this.updateBlock(false);
+    },
+    updateBlock: function(addBlock){
+      var that = this;
+      var opts = _.extend(this.AjaxBasicOpts(), {
+        url: addBlock ? '/setting/block/block' : '/setting/block/unblock',
+        data: _.extend(this.DefaultData()),
+        success: function(req){
+          that.updateBlockSuccess(req, addBlock, that);
+        },
+        error: function(req){
+          that.dealWithError(req);
+        },
+        complete: function(){
+          that.trigger('sync');
+        }
+      });
+      $.ajax(opts);
+    },
+    updateBlockSuccess: function(req, block, that){
+      if (req.error_message) {
+        alert(req.error_message);
+      } else {
+        alert(req.success_message);
+        that.set({blocking: block});
+      }
+    }
+  });
+
+  // フォローボタン
+  var ReviewerButton = Backbone.View.extend({
+    events: {
+      'click [data-proc=reject]':      'onClickReject',
+      'click [data-proc=approval]':    'onClickApproval',
+      'click [data-proc=withdraw]':    'onClickWithdraw',
+      'click [data-proc=follow]':      'onClickFollow',
+      'click [data-proc=pop-up]':      'onClickPopUp',
+      'mouseenter [data-proc=pop-up]': 'onMouseenterPopUp',
+      'mouseleave [data-proc=pop-up]': 'onMouseleavePopUp'
+    },
+    initialize: function(){
+      this.listenTo(this.model, {
+        'sync': this.atSync
+      });
+      this.t = Handlebars.compile($('#template-button-box').html());
+    },
+    onClickReject: function(e){
+      e.preventDefault ? e.preventDefault() : e.returnValue = false;
+      m.triggerWithId('Reviewer:reject', this);
+      return false;
+    },
+    onClickApproval: function(e){
+      e.preventDefault ? e.preventDefault() : e.returnValue = false;
+      m.triggerWithId('Reviewer:approval', this);
+      return false;
+    },
+    onClickWithdraw: function(e){
+      e.preventDefault ? e.preventDefault() : e.returnValue = false;
+      $(e.currentTarget).attr('disabled', 'disabled');
+      m.triggerWithId('Reviewer:withdraw', this);
+      return false;
+    },
+    onClickPopUp: function(e){
+      // クリックでかっとぶのだけ抑止
+      e.preventDefault ? e.preventDefault() : e.returnValue = false;
+      return false;
+    },
+    onClickFollow: function(e){
+      e.preventDefault ? e.preventDefault() : e.returnValue = false;
+      // 3秒間バナーを表示する
+      $('.js-bottom-bar-elem').removeClass('is-hidden');
+      setTimeout(function(){$('.js-bottom-bar-elem').addClass('is-hidden')}, 3000);
+      $(e.currentTarget).attr('disabled', 'disabled');
+      m.triggerWithId('Reviewer:follow', this);
+      return false;
+    },
+    onMouseenterPopUp: function(e){
+      m.triggerWithId('PopUp:show', this);
+    },
+    onMouseleavePopUp: function(e){
+      m.triggerWithId('PopUp:hide', this);
+    },
+    atSync: function(){
+      this.render();
+    },
+    render: function(){
+      this.$el.empty().html(this.t({
+        follow: this.model.get('follow'),
+        mute: this.model.get('mute'),
+        blocked: this.model.get('blocked'),
+        requested: this.model.get('requested'),
+        judge_request: this.model.get('judge_request')
+      }));
+    }
+  });
+
+  // フォローポップアップ
+  var PopUp = Backbone.View.extend({
+    events: {
+      'mouseenter': 'showPopUp',
+      'mouseleave': 'hidePopUp',
+      'click [data-proc=unfollow]' : 'onClickUnFollow',
+      'click [data-proc=mute-off]' : 'onClickMuteOff',
+      'click [data-proc=mute-on]'  : 'onClickMuteOn'
+    },
+    initialize: function(){
+      this.listenToWithId(m, 'PopUp:show', this.showPopUp);
+      this.listenToWithId(m, 'PopUp:hide', this.hidePopUp);
+      this.listenTo(this.model, 'sync', this.atSync);
+      this.t = Handlebars.compile($('#template-pop-up').html());
+    },
+    listenToWithId: function(obj, event_name, method){
+      this.listenTo(obj, event_name + ":" + this.model.get("rvwr_id"), method)
+    },
+
+    onClickUnFollow: function(e){
+      m.triggerWithId('Reviewer:unFollow', this);
+      return false;
+    },
+    onClickMuteOn: function(e){
+      e.preventDefault();
+      m.triggerWithId('Reviewer:muteOn', this);
+    },
+    onClickMuteOff: function(e){
+      e.preventDefault();
+      m.triggerWithId('Reviewer:muteOff', this);
+    },
+    showPopUp: function(){
+      this.$el.show();
+    },
+    hidePopUp: function(){
+      this.$el.hide();
+    },
+    atSync: function(){
+      this.render();
+      this.hidePopUp();
+    },
+    render: function(){
+      if (this.model.get('follow')) {
+        this.$el.empty().html(this.t({mute: this.model.get('mute'), rvwr_id: this.model.get('rvwr_id')})).hide();
+      } else {
+        this.$el.empty();
+      }
+    }
+  });
+
+  // ブロックボタン
+  var BlockButton = Backbone.View.extend({
+    events: {
+      'click': 'onClickBlockPopUp'
+    },
+    onClickBlockPopUp: function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      var visibleCheck = $(".js-main-block-baloon").is(':visible');
+      if(visibleCheck){
+        m.triggerWithId('BlockPopUp:hide', this);
+      } else {
+        m.triggerWithId('BlockPopUp:show', this);
+      }
+    }
+  });
+
+  // ブロックポップアップ
+  var BlockPopUp = Backbone.View.extend({
+    events: {
+      'click [data-proc=unblock]' : 'onClickUnBlock',
+      'click [data-proc=block]' : 'onClickBlock'
+    },
+    initialize: function(){
+      this.listenToWithId(m, 'BlockPopUp:show', this.showPopUp);
+      this.listenToWithId(m, 'BlockPopUp:hide', this.hidePopUp);
+      this.listenTo(this.model, 'sync', this.atSync);
+      this.t = Handlebars.compile($('#template-block-pop-up').html());
+    },
+    listenToWithId: function(obj, event_name, method){
+      this.listenTo(obj, event_name + ":" + this.model.get("rvwr_id"), method)
+    },
+    onClickUnBlock: function(e){
+      e.preventDefault();
+      m.triggerWithId('Reviewer:unBlock', this);
+      this.hidePopUp();
+      return false;
+    },
+    onClickBlock: function(e){
+      e.preventDefault();
+      m.triggerWithId('Reviewer:block', this);
+      this.hidePopUp();
+      return false;
+    },
+    showPopUp: function(){
+      $('.js-main-block-btn').addClass("is-active");
+      this.$el.show();
+    },
+    hidePopUp: function(){
+      $('.js-main-block-btn').removeClass("is-active");
+      this.$el.hide();
+    },
+    atSync: function(){
+      this.render();
+      this.hidePopUp();
+    },
+    render: function(){
+      this.$el.empty().html(this.t({blocking: this.model.get('blocking')})).hide();
+    }
+  });
+
+  var App = {}
+  App.Views = {};
+  App.Models = {};
+  App.Models.Reviewer = Reviewer;
+  App.Views.ReviewerButton = ReviewerButton;
+  App.Views.PopUp = PopUp;
+  App.Views.BlockButton = BlockButton;
+  App.Views.BlockPopUp = BlockPopUp;
+  App.followCatalyst = "";
+  App.init_model = function($rvwr){
+    var rvwr_id = $rvwr.attr('data-rvwr-id');
+    var model = ReviewerInitedModels[rvwr_id];
+    if(!model){
+      model = new App.Models.Reviewer({
+        requested: ($rvwr.attr('data-is-requested') === "true"),
+        judge_request: ($rvwr.attr('data-is-judge-request') === "true"),
+        mute: ($rvwr.attr('data-is-mute') === "true"),
+        follow: ($rvwr.attr('data-is-follow') === "true"),
+        rvwr_id: $rvwr.attr('data-rvwr-id')
+      });
+      ReviewerInitedModels[rvwr_id] = model;
+    }
+    return model;
+  }
+  App.initialize_reviewers = function($rvwrs){
+    var rvwrs = [];
+    var that = this;
+    $rvwrs.each(function(i, rvwr){
+      $rvwr = $(rvwr);
+      var rvwr = that.init_model($rvwr);
+      rvwrs.push(rvwr);
+    });
+
+    // modelに対応するviewをそれぞれ定義
+    $(rvwrs).each(function(i, rvwr){
+      var $buttons = $('.js-btn-box-'+ rvwr.get("rvwr_id"));
+      $buttons.each(function(i, button){
+        var $button = $(button);
+        if (!$button.data("init")){
+          var buttonView = new App.Views.ReviewerButton({el: $button, model: rvwr});
+          buttonView.render();
+          $button.data("init", true);
+        }
+      });
+      var $popups = $('.js-pop-up-'+ rvwr.get("rvwr_id"));
+      $popups.each(function(i, popup){
+        var $popup = $(popup);
+        if (!$popup.data("init")){
+          var popupView = new App.Views.PopUp({el: $popup, model: rvwr});
+          popupView.render();
+          $popup.data("init", true);
+        }
+      });
+    });
+  }
+  // リストに重複しているレビュアーを排除
+  App.filter_rvwrs = function(rvwrs){
+    var rvwr_ids       = [];
+    var filtered_rvwrs = [];
+    $(rvwrs).each(function(i, rvwr){
+      var rvwr_id = $(rvwr).data('rvwr-id');
+      if($.inArray(rvwr_id, rvwr_ids) < 0){
+        filtered_rvwrs.push(rvwr);
+        rvwr_ids.push(rvwr_id);
+      }
+    });
+    return filtered_rvwrs;
+  }
+  that.App = function(){
+    return App;
+  };
+  return that;
+};

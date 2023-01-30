@@ -1,0 +1,82 @@
+var RstWidgetCalendar = function(calendarWrapper){
+  this.$calendarWrapper = $(calendarWrapper);
+  this.$calendar = this.$calendarWrapper.find('.js-widget-calendar-container');
+  this.$calendars = this.$calendar.find('.js-calendar');
+  this.currentIndex = 0;
+
+  var $prevSwitches = this.$calendar.find('.js-calendar-prev');
+  var $nextSwitches = this.$calendar.find('.js-calendar-next');
+  var $calendarDate = this.$calendar.find('.js-cal-date');
+  var _this = this;
+
+  $prevSwitches.on('click', function(){
+    if(0 < _this.currentIndex){
+      _this.currentIndex--;
+      _this.switchCalendar();
+    }
+    return false;
+  });
+  $nextSwitches.on('click', function(){
+    if(_this.currentIndex < _this.$calendars.length - 1 ){
+      _this.currentIndex++;
+      _this.switchCalendar();
+    }
+    return false;
+  });
+  $calendarDate.on('click', function(){
+    var $this = $(this);
+    var svd = $this.closest('.js-calendar-picker').find('#js-svd-header, #svd');
+    var selected_date = svd.val();
+
+    _this.$calendars.find('.is-current').removeClass('is-current');
+    $this.addClass('is-current');
+
+    if($this.closest('#js-header-vacancy').length > 0){
+      $('#js-global-search-date').val($this.attr('data-date-jp'));
+    }else{
+      $('#js-simple-search-date,#js-detail-search-date').val($this.attr('data-date-jp'));
+    }
+    if( selected_date != $this.attr('data-date')){
+      $('#vac_net_1').val([1]);
+      $this.closest('.js-calendar-picker').parent().find('#vac_net_sidebar').prop('checked', true).trigger('change');
+    }
+    svd.val($this.attr('data-date'));
+    _this.closeCalendar();
+
+    return false;
+  });
+
+  this.switchCalendar();
+  $prevSwitches.first().addClass('is-disabled').prop('disabled', true);
+  $nextSwitches.last().addClass('is-disabled').prop('disabled', true);
+};
+
+RstWidgetCalendar.prototype = {
+  switchCalendar: function(){
+    this.$calendars.hide();
+    this.$calendars.eq(this.currentIndex).show();
+  },
+  toggleCalendar: function(){
+    if (!this.$calendarWrapper.is(':visible')){
+      this.$calendarWrapper.show();
+      this.$calendarWrapper.toggleClass('is-show',true);
+      var _this = this;
+      setTimeout(function(){
+        $('body').on('click.calendar',function(){
+          _this.$calendarWrapper.hide();
+          _this.$calendarWrapper.toggleClass('is-show',false);
+          $('body').off('click.calendar');
+        });
+      }, 0);
+    } else {
+      this.$calendarWrapper.hide();
+      this.$calendarWrapper.toggleClass('is-show',false);
+      $('body').off('click.calendar');
+    }
+  },
+  closeCalendar: function(){
+    this.$calendarWrapper.hide();
+    this.$calendarWrapper.toggleClass('is-show',false);
+    $('body').off('click.calendar');
+  }
+};

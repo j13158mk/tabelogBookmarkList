@@ -1,0 +1,549 @@
+/*!
+ * selectsortable
+ *
+ * Depends:
+ *  jquery-1.7.2
+ */
+(function($) {
+
+  // const ------------------------------------------
+  var CLASS_SELECTED = 'selected';
+  var CLASS_DRAGGING = 'dragging';
+  var CLASS_EDITING = 'editing';
+  var CLASS_MOUSEOVER = 'mouseover';
+
+  var DRAG_NONE = 0;
+  var DRAG_RIGHT = 1;
+  var DRAG_LEFT = 2;
+  var DRAG_LOWER = 3;
+  var DRAG_UPPER = 4;
+
+  var BADGE_PADDING = 40;
+
+  // member variable --------------------------------
+  var version = '0.0.1';
+  var opts = null;
+  var $elemRect = null;
+  var $elemSplitter = null;
+  var $elemBadge = null;
+  var $elemSortableArea = null;
+  var $elemTargets = null;
+
+  // when the coordinates of the origin $elemSortableArea
+  var originX = originY = 0;
+
+  // public method -----------------------------------
+  $.fn.version = function() {
+    return version;
+  };
+
+  $.fn.selectsortable = function(options) {
+    opts = $.extend({}, $.fn.selectsortable.defaults, options);
+
+    $elemRect = $('#' + opts.rectId);
+    $elemSplitter = $('#' + opts.splitterId);
+    $elemSortableArea = $('#' + opts.sortableAreaId);
+    $elemBadge = $('#' + opts.badgeId);
+    var startX = startY = 0;
+    var rectX = rectY = rectW = rectH = 0;
+    var isDragging = isSelectedDragging = false;
+
+    var $lastSelectedObj = null;
+    var $splitObj = null;
+
+    // mouseover handler
+    this.on('mouseover', function(e) {
+      if (isDragging) {
+        return false;
+      }
+      $elemTargets = $('.' + opts.targetClass);
+      removeTargetClass(CLASS_MOUSEOVER);
+      var $targetElem = getTargetElement(e.target, opts.targetClass);
+      if ($targetElem != null && !isContainClass($targetElem, CLASS_SELECTED)) {
+        $targetElem.addClass(CLASS_MOUSEOVER);
+      }
+    });
+
+    // mousedown handler (= start darag)
+    this.on('mousedown', function(e) {
+      if (opts.mousedownEventHook != null && !opts.mousedownEventHook(e)) {
+          return;
+      }
+
+      var origin = getOrigin(e);
+      originX = origin['x'];
+      originY = origin['y'];
+
+      $elemTargets = $('.' + opts.targetClass);
+
+      isDragging = true;
+      startX = getOffsetX(e);
+      startY = getOffsetY(e);
+
+      // check clicked on target element
+      var $targetElem = getTargetElement(e.target, opts.targetClass);
+      if ($targetElem != null) {
+        if (isContainClass($targetElem, CLASS_EDITING)) {
+          isDragging = false;
+          cancelEditAll();
+          return;
+        }
+        if (!isContainClass($targetElem, CLASS_SELECTED)) {
+          if (e.shiftKey) {
+            shiftSelect($targetElem);
+          } else {
+            $targetElem.addClass(CLASS_SELECTED);
+            removeClassSelected(e, $targetElem.attr('id'));
+          }
+        } else {
+          if (isSpecialKey(e)) {
+            $targetElem.removeClass(CLASS_SELECTED);
+          }
+        }
+        $lastSelectedObj = $targetElem;
+        isSelectedDragging = true;
+      } else {
+        cancelEditAll();
+        removeClassSelected(e, null);
+      }
+
+      if ($targetElem != null && !isContainClass($targetElem, CLASS_EDITING)) {
+        e.preventDefault();
+        $elemBadge.css('left', startX - originX - BADGE_PADDING);
+        $elemBadge.css('top', startY - originY - BADGE_PADDING);
+      }
+
+      // draw rectangle
+      if (!isSelectedDragging) {
+        drawRectangle(startX - originX, startY - originY, 0, 0);
+        $elemRect.css('display', 'block');
+      }
+    });
+
+    // mousemove handler
+    this.on('mousemove', function(e) {
+      if (!isDragging || isSpecialKey(e)) {
+        return false;
+      }
+
+      if (isSelectedDragging) {
+        $splitObj = sortAction(e, startX, startY, $lastSelectedObj);
+      } else {
+        selectAction(e, startX, startY);
+      }
+      return false;
+    });
+
+    // mouseup handler
+    this.on('mouseup', function(e) {
+      if (isDragging && isSelectedDragging) {
+        // move elements
+        var $trailObj = $splitObj;
+        var beforeElem = $('.' + opts.targetClass);
+        if ($trailObj){
+          var objX = $trailObj.offset().left;
+          var objW = $trailObj.outerWidth();
+          var objC = objX + (objW / 2);
+          var direction = dragDirection(e, objC, startY);
+        }else{
+          var direction = dragDirection(e, startX, startY);
+        }
+        $.each($elemSortableArea.find('.' + CLASS_SELECTED), function() {
+          var $obj = $(this);
+          if (($trailObj != null && $obj != null) &&
+              ($trailObj.attr('id') != $obj.attr('id'))) {
+            $obj.hide();
+            if (direction['h'] === DRAG_RIGHT) {
+              $trailObj.after($obj);
+              $trailObj = $obj;
+            } else if (direction['h'] === DRAG_LEFT) {
+              $trailObj.before($obj);
+            }
+            $obj.fadeIn('slow');
+          }
+        });
+        var afterElem = $('.' + opts.targetClass);
+
+        // on move action
+        var elemDiffNum = 0;
+        for (var i = 0; i < beforeElem.length; i++) {
+          if ($(beforeElem[i]).attr('id') != $(afterElem[i]).attr('id')) {
+            elemDiffNum++;
+          }
+        }
+        if (elemDiffNum > 0 && opts.sortUpdate != null) {
+          opts.sortUpdate(e);
+        }
+      }
+
+      $lastSelectedObj = null;
+      $splitObj = null;
+      isDragging = isSelectedDragging = false;
+      startX = startY = 0;
+      rectX = rectY = rectW = rectH = 0;
+      removeTargetClass(CLASS_DRAGGING);
+      $elemRect.css('display', 'none');
+      $elemSplitter.css('display', 'none');
+      $elemBadge.css('display', 'none');
+    });
+  };
+
+  $.fn.selectsortable.defaults = {
+    sortableAreaId: null, // required
+    splitterId: null, // required
+    targetClass: null, // required
+    rectId: null, // required
+    badgeId: null, // required
+    ieoriginId: null,
+    sortUpdate: null,
+    cancelEdit: null,
+    mousedownEventHook: null
+  };
+
+  $.fn.selectsortable.toArray = function() {
+    var list = [];
+    $.each($('.' + opts.targetClass), function() {
+      list.push($(this).attr('id'));
+    });
+    return list;
+  };
+
+  $.fn.selectsortable.selectedObjtoArray = function() {
+    var list = [];
+    $.each($('.' + opts.targetClass + '.' + CLASS_SELECTED), function() {
+      list.push($(this).attr('id'));
+    });
+    return list;
+  };
+
+
+  // private method ----------
+
+  var isWin = function() {
+    return (navigator.userAgent.indexOf('Win') >= 0);
+  };
+
+  var isMac = function() {
+    return (navigator.userAgent.indexOf('Mac') >= 0);
+  };
+
+  var getOffsetX = function(e) {
+    return e.pageX;
+  };
+
+  var getOffsetY = function(e) {
+    return e.pageY;
+  };
+
+  var getOrigin = function(e) {
+    if (isIEBrowser() && isIE6()) {
+      if (opts.ieoriginId == null) {
+        return {
+            x: $elemSortableArea.offset().left,
+            y: $elemSortableArea.offset().top
+        };
+      }
+      $elemIEorigin = $('#' + opts.ieoriginId);
+      var correctLeft = $elemIEorigin.position().left;
+      var correctTop = $elemIEorigin.position().top;
+      return {
+          x: $elemSortableArea.offset().left + correctLeft,
+          y: $elemSortableArea.offset().top + correctTop
+      };
+    } else {
+      return {
+          x: $elemSortableArea.offset().left,
+          y: $elemSortableArea.offset().top
+      };
+    }
+  };
+
+  var isIEBrowser = function() {
+    if (window.navigator.userAgent.toLowerCase().indexOf('msie') > -1) {
+      return true;
+    }
+    return false;
+  };
+
+  var isIE6 = function() {
+    if (window.navigator.appVersion.toLowerCase().indexOf('msie 6.') > -1) {
+      return true;
+    }
+    return false;
+  };
+
+  var isContainClass = function($element, className) {
+    var _class = $element.attr('class');
+    return $element.hasClass(className);
+  };
+
+  var getTargetElement = function(element, className) {
+    if (element == null) {
+      return null;
+    }
+    var $element = $(element);
+    if (isContainClass($element, className)) {
+      return $element;
+    } else {
+      return getTargetElement(element.parentNode, className);
+    }
+  };
+
+  var isSpecialKey = function(e) {
+    if (isWin()) {
+      return e.ctrlKey;
+    } else if (isMac()) {
+      return e.metaKey;
+    }
+    return false;
+  };
+
+  var removeClassSelected = function(e, excludeId) {
+    $.each($elemTargets, function() {
+      var $obj = $(this);
+      if ($obj.attr('id') != excludeId && !isSpecialKey(e)) {
+          $obj.removeClass(CLASS_SELECTED);
+      }
+    });
+  };
+
+  var removeTargetClass = function(className) {
+    if ($elemTargets == null) {
+      return false;
+    }
+    $.each($elemTargets, function() {
+      $(this).removeClass(className);
+    });
+  };
+
+  var cancelEditAll = function() {
+    removeTargetClass(CLASS_EDITING);
+    $.each($elemTargets, function() {
+      if (opts.cancelEdit != null) {
+          opts.cancelEdit($(this));
+      }
+    });
+  };
+
+  var shiftSelect = function($targetElem) {
+    if ($elemTargets == null) {
+      return false;
+    }
+
+    $targetElem.addClass(CLASS_SELECTED);
+    var nowSelectedId = $targetElem.attr('id');
+    var idx = 0;
+    var nowIdx = firstIdx = lastIdx = -1;
+    $.each($elemTargets, function() {
+      var $obj = $(this);
+      var _id = $obj.attr('id');
+      if ($obj.hasClass(CLASS_SELECTED)) {
+        if (nowSelectedId == _id) {
+          nowIdx = idx;
+        } else if (firstIdx < 0) {
+          firstIdx = idx;
+          lastIdx = idx;
+        } else {
+          lastIdx = idx;
+        }
+      }
+      idx++;
+    });
+
+    var startIdx = endIdx = -1;
+    if (nowIdx < firstIdx) {
+      startIdx = nowIdx;
+      endIdx = firstIdx + 1;
+    } else if (nowIdx > lastIdx) {
+      startIdx = lastIdx;
+      endIdx = nowIdx + 1;
+    }
+    removeTargetClass(CLASS_SELECTED);
+    for (var i = startIdx; i < endIdx; i++) {
+      $($elemTargets[i]).addClass(CLASS_SELECTED);
+    }
+  };
+
+  var sortAction = function(e, startX, startY, $lastSelectedObj) {
+    $elemSortableArea.find('.' + CLASS_SELECTED).addClass(CLASS_DRAGGING);
+    var draggingX = getOffsetX(e);
+    var draggingY = getOffsetY(e);
+
+    // draw badge
+    var selectNum = $elemSortableArea.find('.' + CLASS_SELECTED).length;
+    drawBadge(selectNum, draggingX - originX, draggingY - originY);
+
+    // draw splitter
+    var $tailObj = null;
+    var isSpVisible = false;
+    $.each($elemTargets, function() {
+      var $obj = $(this);
+      var objId = $obj.attr('id');
+      if (objId != $lastSelectedObj.attr('id')) {
+        var objX = $obj.offset().left;
+        var objY = $obj.offset().top;
+        var objW = $obj.outerWidth();
+        var objH = $obj.outerHeight();
+        var objC = objX + (objW / 2);
+
+        // judge object hit.
+        var direction = dragDirection(e, objC, startY);
+        var xleft = objX;
+        var xright = objX + objW;
+        if (direction['h'] == DRAG_LEFT) {
+          xright = objC;
+        } else {
+          xleft = objC;
+        }
+        if ((draggingX >= xleft && draggingX <= xright) &&
+            (draggingY >= objY && draggingY <= (objY + objH))) {
+          var splitterX = $obj.offset().left - originX;
+          var splitterY = $obj.offset().top - originY;
+          drawSplitter(splitterX + getPadding(direction, $obj),
+              splitterY, objH);
+          $elemSplitter.css('display', 'block');
+          isSpVisible = true;
+          $tailObj = $obj;
+        }
+      }
+    });
+    if (!isSpVisible) {
+      $elemSplitter.css('display', 'none');
+    }
+    return $tailObj;
+  };
+
+  var getPadding = function(direction, $obj) {
+    var paddingDirection = '';
+    if (direction['h'] == DRAG_LEFT) {
+      paddingDirection = 'padding-left';
+    } else {
+      paddingDirection = 'padding-right';
+    }
+    var elemPadding = $obj.css(paddingDirection);
+    if (elemPadding != null) {
+      elemPadding = elemPadding.match(/[0-9]+/);
+      elemPadding = elemPadding == null ? 0 : parseInt(elemPadding[0]);
+    } else {
+      elemPadding = 0;
+    }
+    if (direction['h'] == DRAG_LEFT) {
+      return elemPadding * -1;
+    } else {
+      return elemPadding + $obj.outerWidth();
+    }
+  };
+
+  var drawBadge = function(num, x, y) {
+    $elemBadge.text(num);
+    $elemBadge.css('left', (x - BADGE_PADDING) + 'px');
+    $elemBadge.css('top', (y - BADGE_PADDING) + 'px');
+    $elemBadge.css('display', 'block');
+  };
+
+  var drawSplitter = function(x, y, height) {
+    $elemSplitter.css('left', x + 'px');
+    $elemSplitter.css('top', y + 'px');
+    $elemSplitter.css('width', '1px');
+    $elemSplitter.css('height', height + 'px');
+  };
+
+  var selectAction = function(e, startX, startY) {
+    // draw rectangle
+    var rectCoordinates = rectangleCoordinate(e, startX, startY);
+    var rectX = rectCoordinates['x'];
+    var rectY = rectCoordinates['y'];
+    var rectW = rectCoordinates['w'];
+    var rectH = rectCoordinates['h'];
+    drawRectangle(rectX - originX, rectY - originY, rectW, rectH);
+
+    // judge object hit.
+    $.each($elemTargets, function() {
+      // move coordinate
+      var $obj = $(this);
+      var objId = $obj.attr('id');
+      var objX = $obj.offset().left - rectX;
+      var objY = $obj.offset().top - rectY;
+      var objW = $obj.outerWidth();
+      var objH = $obj.outerHeight();
+
+      if (!(objX + objW < 0) && !(objX > rectW) &&
+          !(objY + objH < 0) && !(objY > rectH)) {
+        $obj.addClass(CLASS_SELECTED);
+      } else {
+        $obj.removeClass(CLASS_SELECTED);
+      }
+    });
+  };
+
+  var rectangleCoordinate = function(e, rectStartX, rectStartY) {
+    var rectX = 0;
+    var rectY = 0;
+    var rectW = Math.abs(getOffsetX(e) - rectStartX);
+    var rectH = Math.abs(getOffsetY(e) - rectStartY);
+    var direction = dragDirection(e, rectStartX, rectStartY);
+
+    if (direction['h'] === DRAG_NONE && direction['v'] === DRAG_UPPER) {
+      rectX = getOffsetX(e);
+      rectY = getOffsetY(e);
+    } else if (direction['h'] === DRAG_RIGHT && direction['v'] === DRAG_UPPER) {
+      rectX = rectStartX;
+      rectY = getOffsetY(e);
+    } else if (direction['h'] === DRAG_RIGHT && direction['v'] === DRAG_NONE) {
+      rectX = rectStartX;
+      rectY = getOffsetY(e);
+    } else if (direction['h'] === DRAG_RIGHT && direction['v'] === DRAG_LOWER) {
+      rectX = rectStartX;
+      rectY = rectStartY;
+    } else if (direction['h'] === DRAG_NONE && direction['v'] === DRAG_LOWER) {
+      rectX = rectStartX;
+      rectY = rectStartY;
+    } else if (direction['h'] === DRAG_LEFT && direction['v'] === DRAG_LOWER) {
+      rectX = getOffsetX(e);
+      rectY = rectStartY;
+    } else if (direction['h'] === DRAG_LEFT && direction['v'] === DRAG_NONE) {
+      rectX = getOffsetX(e);
+      rectY = rectStartY;
+    } else if (direction['h'] === DRAG_LEFT && direction['v'] === DRAG_UPPER) {
+      rectX = getOffsetX(e);
+      rectY = getOffsetY(e);
+    }
+    return {x: rectX, y: rectY, w: rectW, h: rectH};
+  };
+
+  var drawRectangle = function(x, y, width, height) {
+    $elemRect.css('left', x + 'px');
+    $elemRect.css('top', y + 'px');
+    $elemRect.css('width', width + 'px');
+    $elemRect.css('height', height + 'px');
+  };
+
+  var dragDirection = function(e, startX, startY) {
+    var horizontal = DRAG_NONE;
+    var vertical = DRAG_NONE;
+    if (getOffsetX(e) - startX > 0) {
+      horizontal = DRAG_RIGHT;
+    } else if (getOffsetX(e) - startX < 0) {
+      horizontal = DRAG_LEFT;
+    }
+
+    if (getOffsetY(e) - startY > 0) {
+      vertical = DRAG_LOWER;
+    } else if (getOffsetY(e) - startY < 0) {
+      vertical = DRAG_UPPER;
+    }
+
+    return {h: horizontal, v: vertical};
+  };
+
+  /**
+   * for ie debug
+   **/
+  if (!('console' in window)) {
+    window.console = {};
+    window.console.log = function(str) {
+      return str;
+    };
+  }
+
+}) (jQuery);
